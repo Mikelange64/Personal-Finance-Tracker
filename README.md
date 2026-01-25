@@ -124,4 +124,4 @@ Bonus Features
     5. Backup and Restore
         ◦ Create ZIP backup of all data files 
         ◦ Restore from backup file 
-        ◦ Include timestamp in backup filename 
+        ◦ Include timestamp in backup filename
