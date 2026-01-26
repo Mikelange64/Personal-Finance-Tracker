@@ -3,7 +3,8 @@ import os
 import csv
 import json
 from datetime import datetime, timezone
-from collections import Counter
+from collections import Counter, defaultdict
+import calendar
 
 
 class FinanceTracker:
@@ -103,30 +104,68 @@ class FinanceTracker:
         transaction_list = self.transactions['transactions']
         month = getattr(args, 'month', None)
         year = args.year
-        monthly_tx = []
-        yearly_tx = []
+
+        tx_in_month = []
+        tx_in_year = []
 
         for tx in transaction_list:
             date = self._parse_date(tx.get('date'))
 
             if month and date.month == month and date.year == year:
-                monthly_tx.append(tx)
+                tx_in_month.append(tx)
 
             elif date.year == year:
-                yearly_tx.append(tx)
+                tx_in_year.append(tx)
 
-        if month and not monthly_tx:
+        if month and not tx_in_month:
             print(f'No transaction found for {month}/{year}.')
             return False
 
-        if not month and not yearly_tx:
+        if not month and not tx_in_year:
             print(f'No transaction found for {year}.')
             return False
 
-        filtered_list = monthly_tx if month else yearly_tx
+        filtered_list = tx_in_month if month else tx_in_year
+        report = 'Monthly Report' if month else 'Yearly Report'
+        final_report = self._report(filtered_list)
 
-        total_expenses = round(sum(tx['expense'] for tx in filtered_list if 'expense' in tx), 2)
-        total_income = round(sum(tx['income'] for tx in filtered_list if 'income' in tx), 2)
+        if not month:
+            monthly_breakdown = self._monthly_breakdown(tx_in_year)
+
+            print(f'{report}')
+            for k, v in final_report.items():
+                print(f'{k:<20}: {v}')
+
+            print('=' * 30)
+            for month, month_breakdown in monthly_breakdown.items():
+                print(f'\n{month}')
+                for k, v in month_breakdown.items():
+                    print(f'{k:<20}: {v}')
+                print('-' * 30)
+        else:
+            print(f'{report}')
+            for k, v in final_report.items():
+                print(f'{k:<20}: {v}')
+
+    def _monthly_breakdown(self, transactions:list) -> dict:
+        monthly = defaultdict(list)
+        monthly_report = {}
+
+        for tx in transactions:
+            date = self._parse_date(tx.get('date'))
+            monthly[date.month].append(tx)
+
+        sorted_monthly = dict(sorted(monthly))
+
+        for month, tx in sorted_monthly.items():
+            monthly_report[calendar.month_name[month]] = self._report(tx)
+
+        return monthly_report
+
+    def _report(self, tx_lst:list) -> dict:
+
+        total_expenses = round(sum(tx['expense'] for tx in tx_lst if 'expense' in tx), 2)
+        total_income = round(sum(tx['income'] for tx in tx_lst if 'income' in tx), 2)
         net_savings = total_income - total_expenses
 
         final_report = {
@@ -135,17 +174,48 @@ class FinanceTracker:
             'savings': net_savings,
         }
 
-        categories = [tx['category'] for tx in filtered_list if 'category' in tx]
+        categories = [tx['category'] for tx in tx_lst if 'category' in tx]
 
         if categories:
             most_common_category = Counter(categories).most_common(1)[0][0]
-            categories_expense = round(sum(tx['expense'] for tx in filtered_list if tx['category'] == most_common_category), 2)
+            categories_expense = round(sum(tx['expense'] for tx in tx_lst if tx['category'] == most_common_category), 2)
             final_report['most common expense'] = f'{most_common_category} ({categories_expense})'
 
-        report = 'Monthly Report' if month else 'Yearly Report'
-        print(f'\n{report}')
-        for k, v in final_report.items():
-            print(f'{k:<20}: {v}')
+        return final_report
+
+    def category_report(self, args):
+        expense_list = [tx for tx in self.transactions['transactions'] if 'expense' in tx]
+        year = args.year
+        month = getattr(args, 'month', None)
+
+        categories = defaultdict(list)
+
+
+        for tx in expense_list:
+            date = self._parse_date(tx.get('date'))
+
+            if month and date.month == month and date.year == year:
+                categories[tx['category']].append(tx)
+
+            elif date.year == year:
+                categories[tx['category']].append(tx)
+
+        total_by_cat = {}
+
+        for category, expenses in categories.items():
+            total_by_cat[category] = round(sum(tx['expense'] for tx in expenses), 2)
+
+        sorted_total = dict(sorted(total_by_cat.items(), key=lambda x: x[1]))
+        total_expenses = sum(sorted_total.values())
+
+        print('Report by Category')
+
+        for k, v in sorted_total.items():
+            print(f'{k} : ${v} ({v/total_expenses * 100}%)')
+
+
+
+
 
 
 
@@ -224,9 +294,15 @@ def main():
     monthly_parser.set_defaults(func=tracker.generate_report)
 
     # ======== REPORT TYPES: YEARLY REPORTS ==========
-    yearly_parser =  report_subparsers.add_parser('yearly', help='Monthly Summary')
+    yearly_parser =  report_subparsers.add_parser('yearly', help='Yearly Summary')
     yearly_parser.add_argument('--year',  required=True,  type=int, help='Year')
     yearly_parser.set_defaults(func=tracker.generate_report)
+
+    # ======== REPORT TYPES: CATEGORY REPORTS ==========
+    category_parser =  report_subparsers.add_parser('category', help='Summary by categories')
+    category_parser.add_argument('--year',type=int, required=True, help='Year')
+    category_parser.add_argument('--month', type=int, help='Month (1-12)')
+    category_parser.set_defaults(func=tracker.category_report)
 
     # =============== EXPORT COMMANDS ================
     export_parser = subparsers.add_parser('export', help='Export Document')
