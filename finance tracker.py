@@ -2,7 +2,7 @@ import argparse
 import os
 import csv
 import json
-from datetime import datetime, timezone
+from datetime import datetime, date
 from collections import Counter, defaultdict
 import calendar
 
@@ -11,9 +11,10 @@ class FinanceTracker:
 
     def __init__(self):
         self.transactions = {'transactions': []}
+        self.budgets = {'budgets': []}
 
     def add_expense(self, args):
-        id = len(self.transactions['transaction']) + 1
+        id = len(self.transactions['transactions']) + 1
         date = args.date if args.date else datetime.now().strftime('%Y-%m-%d')
 
         expense = {
@@ -25,10 +26,10 @@ class FinanceTracker:
             'description': args.description,
         }
 
-        self.transactions['transaction'].append(expense)
+        self.transactions['transactions'].insert(0, expense)
 
     def add_income(self, args):
-        id = len(self.transactions['transaction']) + 1
+        id = len(self.transactions['transactions']) + 1
         date = args.date if args.date else datetime.now().strftime('%Y-%m-%d')
 
         income = {
@@ -39,7 +40,7 @@ class FinanceTracker:
             'category': args.category,
         }
 
-        self.transactions['transaction'].append(income)
+        self.transactions['transactions'].insert(0, income)
 
     def list_transactions(self, args):
 
@@ -68,37 +69,13 @@ class FinanceTracker:
             # FASTER ALTERNATIVE PROPOSED BY AI: if all(transaction.get(k) == v for k, v in filters.items()) and self._within_range(args, tx_date): filtered_list.append(transaction)
             # EVEN FASTER: filtered_list = [ tx for tx in transaction_list if self._within_range(args, tx_date) and all(tx.get(k) == v for k, v in filters.items()]
 
-        sorted_transactions = sorted(filtered_list, key=lambda x: self._parse_date(x.get('date')))
+        sorted_transactions = self._sort_transactions(filtered_list)
 
         if sorted_transactions:
             for transaction in sorted_transactions:
                 print(transaction)
         else:
             print('No transaction matches these filters')
-
-    def _date_filter(self, args, date) -> bool:
-
-        start_date = self._parse_date(args.start_date)
-        end_date = self._parse_date(args.end_date)
-        month = args.month
-        year = args.year
-
-        if start_date and date < start_date:
-            return False
-
-        if end_date and date > end_date:
-            return False
-
-        if month and month != date.month:
-            return False
-
-        if year and year != date.year:
-            return False
-
-        return True
-
-    def _parse_date(self, s):
-        return datetime.strptime(s, '%Y-%m-%d').date() if s else None
 
     def generate_report(self, args):
         transaction_list = self.transactions['transactions']
@@ -147,44 +124,8 @@ class FinanceTracker:
             for k, v in final_report.items():
                 print(f'{k:<20}: {v}')
 
-    def _monthly_breakdown(self, transactions:list) -> dict:
-        monthly = defaultdict(list)
-        monthly_report = {}
-
-        for tx in transactions:
-            date = self._parse_date(tx.get('date'))
-            monthly[date.month].append(tx)
-
-        sorted_monthly = dict(sorted(monthly))
-
-        for month, tx in sorted_monthly.items():
-            monthly_report[calendar.month_name[month]] = self._report(tx)
-
-        return monthly_report
-
-    def _report(self, tx_lst:list) -> dict:
-
-        total_expenses = round(sum(tx['expense'] for tx in tx_lst if 'expense' in tx), 2)
-        total_income = round(sum(tx['income'] for tx in tx_lst if 'income' in tx), 2)
-        net_savings = total_income - total_expenses
-
-        final_report = {
-            'expenses': total_expenses,
-            'income': total_income,
-            'savings': net_savings,
-        }
-
-        categories = [tx['category'] for tx in tx_lst if 'category' in tx]
-
-        if categories:
-            most_common_category = Counter(categories).most_common(1)[0][0]
-            categories_expense = round(sum(tx['expense'] for tx in tx_lst if tx['category'] == most_common_category), 2)
-            final_report['most common expense'] = f'{most_common_category} ({categories_expense})'
-
-        return final_report
-
     def category_report(self, args):
-        expense_list = [tx for tx in self.transactions['transactions'] if 'expense' in tx]
+        expense_list = [tx for tx in self.transactions['transactions'] if tx.get('type') == 'expense']
         year = args.year
         month = getattr(args, 'month', None)
 
@@ -203,7 +144,7 @@ class FinanceTracker:
         total_by_cat = {}
 
         for category, expenses in categories.items():
-            total_by_cat[category] = round(sum(tx['expense'] for tx in expenses), 2)
+            total_by_cat[category] = round(sum(tx['amount'] for tx in expenses), 2)
 
         sorted_total = dict(sorted(total_by_cat.items(), key=lambda x: x[1]))
         total_expenses = sum(sorted_total.values())
@@ -213,38 +154,164 @@ class FinanceTracker:
         for k, v in sorted_total.items():
             print(f'{k} : ${v} ({v/total_expenses * 100}%)')
 
+    def set_budget(self, args):
 
+        limit = args.limit
+        category = getattr(args, 'category', None)
+        month = date.today().month
+        budgets = self.budgets['budgets']
+        latest_budget = budgets[0] if budgets else None
 
+        # if the month entered is greater than the current month, the budget is set for that month next year
+        if args.month < month:
+            year = date.today().year + 1
+        else:
+            year = date.today().year
 
+        if latest_budget and latest_budget['date'] == f"{args.month:02}-{year}":
+            latest_budget[category] = limit
+            latest_budget['total'] = sum(
+                v for k, v in latest_budget.items()
+                if k not in ('date', 'total')
+            )
+        else:
+            new_budget = {'date': f"{args.month:02}-{year}", category: limit, 'total': limit}
+            budgets.insert(0, new_budget)
 
+    def track_budget(self, args):
+        expense_list = [tx for tx in self.transactions['transactions'] if tx.get('type') == 'expense']
+        budgets = self.budgets.get('budgets', [])
+        latest_budget = budgets[0] if budgets else None
 
+        if not latest_budget:
+           print('You have not set a budget')
+           return
 
+        elif not expense_list:
+            print('You have no expenses')
+            return
 
+        category = getattr(args, 'category', None)
 
+        if category and category not in latest_budget:
+            print(f'{category} was not part of your latest budget.')
+            return
 
+        month, year = map(int, latest_budget['date'].split('-'))
+        budget_start = date(year, month, 1)
+        budget_end = date(year, month, calendar.monthrange(year, month)[1])
 
+        expense_so_far = []
 
+        for tx in expense_list:
+            tx_date = self._parse_date(tx.get('date'))
 
+            if category:
+                if budget_start <= tx_date <= budget_end and category == tx['category']:
+                    expense_so_far.append(tx)
+            else:
+                if budget_start <= tx_date <= budget_end:
+                    expense_so_far.append(tx)
 
+        budget_status = {}
+        alert = None
 
+        if category:
+            budget_total = latest_budget[category]
+            total_expense = sum(tx['amount'] for tx in expense_so_far)
+            budget_progress = total_expense / budget_total * 100
 
+            budget_status['category'] = category
 
+        else:
+            expense_report = self._report(expense_so_far)
+            budget_total = latest_budget['total']
+            total_expense = expense_report['expenses']
+            if budget_total == 0:
+                print('Your budget is 0. Cannot calculate progress')
+                return
+            else:
+                budget_progress = total_expense / budget_total * 100
 
+        if budget_progress > 100:
+            alert = f'You have exceeded your budget by ${total_expense - budget_total:.2f}!'
+        elif budget_progress == 100:
+            alert = 'You have reached your budget!'
+        elif 70 < budget_progress < 100:
+            alert = "You have almost reached your budget!"
 
+        budget_status['Budget total'] = f'${budget_total:.2f}'
+        budget_status['Total expenses'] = f'${total_expense:.2f}'
+        budget_status['Progress'] = f'{round(budget_progress)}%'
+        if alert: budget_status['Alert'] = alert
 
+        print('Budget Status')
 
+        for k, v in budget_status.items():
+            print(f'{k}: {v}')
 
+    def _parse_date(self, s):
+        return datetime.strptime(s, '%Y-%m-%d').date() if s else None
 
+    def _sort_transactions(self, transactions:list) -> list:
+        return sorted(transactions, key=lambda x: self._parse_date(x.get('date')), reverse=True)
 
+    def _date_filter(self, args, date) -> bool:
 
+        start_date = self._parse_date(args.start_date)
+        end_date = self._parse_date(args.end_date)
+        month = args.month
+        year = args.year
 
+        if start_date and date < start_date:
+            return False
 
+        if end_date and date > end_date:
+            return False
 
+        if month and month != date.month:
+            return False
 
+        if year and year != date.year:
+            return False
 
+        return True
 
+    def _monthly_breakdown(self, transactions:list) -> dict:
+        monthly = defaultdict(list)
+        monthly_report = {}
 
+        for tx in transactions:
+            date = self._parse_date(tx.get('date'))
+            monthly[date.month].append(tx)
 
+        sorted_monthly = dict(sorted(monthly))
+
+        for month, tx in sorted_monthly.items():
+            monthly_report[calendar.month_name[month]] = self._report(tx)
+
+        return monthly_report
+
+    def _report(self, tx_lst:list) -> dict:
+
+        total_expenses = round(sum(tx['amount'] for tx in tx_lst if tx.get('type') == 'expense'), 2)
+        total_income = round(sum(tx['amount'] for tx in tx_lst if tx.get('type') == 'income'), 2)
+        net_savings = total_income - total_expenses
+
+        final_report = {
+            'expenses': f'{total_expenses:.2f}',
+            'income': f'{total_income:.2f}',
+            'savings': f'{net_savings:.2f}',
+        }
+
+        categories = [tx['category'] for tx in tx_lst if 'category' in tx]
+
+        if categories:
+            most_common_category = Counter(categories).most_common(1)[0][0]
+            categories_expense = round(sum(tx['amount'] for tx in tx_lst if tx['category'] == most_common_category), 2)
+            final_report['most common expense'] = f'{most_common_category} ({categories_expense})'
+
+        return final_report
 
 def main():
 
@@ -279,7 +346,7 @@ def main():
     list_parser.add_argument('--type', choices=['expense', 'income'], help='Filter by type')
     list_parser.add_argument('--start-date', type=str, help='Start date (YYYY-MM-DD)')
     list_parser.add_argument('--end-date', type=str, help='End date (YYYY-MM-DD)')
-    list_parser.add_argument('--month', type=int, help='Filter by month (1-12)')
+    list_parser.add_argument('--month', type=int, choices=range(1,12), help='Filter by month (1-12)')
     list_parser.add_argument('--year', type=int, help='Filter by year')
     list_parser.set_defaults(func=tracker.list_transactions)
 
@@ -289,7 +356,7 @@ def main():
 
     # ======== REPORT TYPES: MONTHLY REPORTS =========
     monthly_parser =  report_subparsers.add_parser('monthly', help='Monthly Summary')
-    monthly_parser.add_argument('--month', type=int, required=True, help='Month (1-12)')
+    monthly_parser.add_argument('--month', type=int, choices=range(1,12), required=True, help='Month (1-12)')
     monthly_parser.add_argument('--year', type=int, required=True,  help='Year')
     monthly_parser.set_defaults(func=tracker.generate_report)
 
@@ -303,6 +370,27 @@ def main():
     category_parser.add_argument('--year',type=int, required=True, help='Year')
     category_parser.add_argument('--month', type=int, help='Month (1-12)')
     category_parser.set_defaults(func=tracker.category_report)
+
+    # =============== BUDGET COMMAND =================
+    budget_parser = subparsers.add_parser('budget', help='Set and track budgets')
+    budget_subparser = budget_parser.add_subparsers(dest='budget actions', help='Choose action')
+
+    # ========== BUDGET ACTION: SET BUDGET ===========
+    set_parser = budget_subparser.add_parser('set', help='Set a budget')
+    set_parser.add_argument('--limit', type=float, required=True, help='Set a limit')
+    set_parser.add_argument('--month', type=int, choices=range(1,12), required=True, help='Budget month. If the month entered is greater than the current month, the budget is set for that same month, next year')
+    set_parser.add_argument('--category', type=str, required=True, help='Choose a category to budget')
+    set_parser.set_defaults(func=tracker.set_budget)
+
+    # ========= BUDGET ACTION: BUDGET STATUS =========
+    set_parser = budget_subparser.add_parser('status', help='Set a budget')
+    set_parser.add_argument('--category', type=str, help='Choose a category to track')
+    set_parser.add_argument('--start-date', type=str, help='Start date (YYYY-MM-DD)')
+    set_parser.add_argument('--end-date', type=str, help='End date (YYYY-MM-DD)')
+    set_parser.add_argument('--month', type=int, help='Filter by month (1-12)')
+    set_parser.add_argument('--year', type=int, help='Filter by year')
+    set_parser.set_defaults(func=tracker.track_budget)
+
 
     # =============== EXPORT COMMANDS ================
     export_parser = subparsers.add_parser('export', help='Export Document')
@@ -320,12 +408,5 @@ def main():
     else:
         parser.print_help()
 
-
 if __name__ == '__main__':
     main()
-
-
-
-
-
-
