@@ -1,5 +1,6 @@
 import argparse
 import os
+import tempfile
 from pathlib import Path
 import csv
 import json
@@ -49,8 +50,8 @@ class FinanceTracker:
             'category': args.category,
             'description': args.description,
         }
-
         self.transactions['transactions'].insert(0, expense)
+        self._save('transaction', self.transactions)
 
     def add_income(self, args):
         id = len(self.transactions['transactions']) + 1
@@ -65,6 +66,7 @@ class FinanceTracker:
         }
 
         self.transactions['transactions'].insert(0, income)
+        self._save('transaction', self.transactions)
 
     def list_transactions(self, args):
 
@@ -209,6 +211,8 @@ class FinanceTracker:
             }
             budgets.insert(0, new_budget)
 
+            self._save('budget', self.transactions)
+
     def track_budget(self, args):
         expense_list = [tx for tx in self.transactions['transactions'] if tx.get('type') == 'expense']
         latest_budgets = self._select_budget(args)
@@ -314,19 +318,17 @@ class FinanceTracker:
             self._create_json(output_path, transaction_list)
             print(f'{file_name} has been created as {output_path}.')
 
-    def _create_csv(self, output, data:list):
+    def _save(self, data_type, data:dict ):
+        if data_type == 'transaction':
+            file = self.TRANSACTION_FILE
+        else:
+            file = self.BUDGET_FILE
 
-        with open(output, 'w', newline='') as f:
-            fieldnames = ['id', 'type', 'date', 'amount', 'category', 'description']
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+        with tempfile.NamedTemporaryFile('w', delete=False) as tmp:
+            json.dump(data, tmp, indent=2)
+            temp_name = tmp.name
 
-            writer.writeheader()
-            writer.writerows(data)
-
-    def _create_json(self, output, data:list):
-
-        with open(output, 'w') as f:
-            json.dump(data, f, indent=2)
+        os.replace(temp_name, file)
 
     def _parse_date(self, s):
         return datetime.strptime(s, '%Y-%m-%d').date() if s else None
@@ -423,6 +425,20 @@ class FinanceTracker:
             #                and b['end_date'] >= self._parse_date(args.start_date)
             #        )
             # ]
+
+    def _create_csv(self, output, data:list):
+
+        with open(output, 'w', newline='') as f:
+            fieldnames = ['id', 'type', 'date', 'amount', 'category', 'description']
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+
+            writer.writeheader()
+            writer.writerows(data)
+
+    def _create_json(self, output, data:list):
+
+        with open(output, 'w') as f:
+            json.dump(data, f, indent=2)
 
 def main():
 
