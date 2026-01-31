@@ -1,5 +1,6 @@
 import argparse
 import os
+from pathlib import Path
 import csv
 import json
 from datetime import datetime, date
@@ -9,9 +10,32 @@ import calendar
 
 class FinanceTracker:
 
-    def __init__(self):
-        self.transactions = {'transactions': []}
-        self.budgets = {'budgets': []}
+    BASE_DIR = Path.home()/'Documents'
+    TRANSACTION_FILE = BASE_DIR/'transactions.json'
+    BUDGET_FILE = BASE_DIR/'budgets.json'
+
+    def __init__(self, base_dir = None):
+
+        self.BASE_DIR = Path(base_dir).expanduser().resolve() if base_dir else Path.home()/'Documents'
+        self.TRANSACTION_FILE = self.BASE_DIR / 'transactions.json'
+        self.BUDGET_FILE = self.BASE_DIR / 'budgets.json'
+
+        self.BASE_DIR.mkdir(parents=True, exist_ok=True)
+
+        if self.TRANSACTION_FILE.exists():
+            with open(self.TRANSACTION_FILE, 'r') as f:
+                self.transactions = json.load(f)
+        else:
+            self.transactions = {'transactions': []}
+
+        if self.BUDGET_FILE.exists():
+            with open(self.BUDGET_FILE, 'r') as j:
+                self.budgets = json.load(j)
+        else:
+            self.budgets = {'budgets': []}
+
+        # similarly I could use self.transactions = self.TRANSACTION_FILE.open('r') as f using the pathlib module
+        # or I could use self.transactions = json.loads(self.TRANSACTION_FILE.read_text())
 
     def add_expense(self, args):
         id = len(self.transactions['transactions']) + 1
@@ -67,7 +91,7 @@ class FinanceTracker:
                 filtered_list.append(transaction)
 
             # FASTER ALTERNATIVE PROPOSED BY AI: if all(transaction.get(k) == v for k, v in filters.items()) and self._within_range(args, tx_date): filtered_list.append(transaction)
-            # EVEN FASTER: filtered_list = [ tx for tx in transaction_list if self._within_range(args, tx_date) and all(tx.get(k) == v for k, v in filters.items()]
+            # EVEN FASTER: filtered_list = [ tx for tx in transaction_list if self._date_filter(args, tx_date) and all(tx.get(k) == v for k, v in filters.items()]
 
         sorted_transactions = self._sort_transactions(filtered_list)
 
@@ -155,12 +179,14 @@ class FinanceTracker:
             print(f'{k} : ${v} ({v/total_expenses * 100}%)')
 
     def set_budget(self, args):
-
-        limit = args.limit
-        category = getattr(args, 'category', None)
-        month = date.today().month
         budgets = self.budgets['budgets']
         latest_budget = budgets[0] if budgets else None
+
+        limit = args.limit
+        budget_month = args.month
+        category = getattr(args, 'category', None)
+
+        month = date.today().month
 
         # if the month entered is greater than the current month, the budget is set for that month next year
         if args.month < month:
@@ -168,38 +194,40 @@ class FinanceTracker:
         else:
             year = date.today().year
 
-        if latest_budget and latest_budget['date'] == f"{args.month:02}-{year}":
+        if latest_budget and latest_budget['start_date'] == date(year, budget_month, 1):
             latest_budget[category] = limit
             latest_budget['total'] = sum(
                 v for k, v in latest_budget.items()
                 if k not in ('date', 'total')
             )
         else:
-            new_budget = {'date': f"{args.month:02}-{year}", category: limit, 'total': limit}
+            new_budget = {
+                'start_date': date(year, month, 1),
+                'end_date': date(year, month, calendar.monthrange(year, month)[1]),
+                category: limit,
+                'total': limit
+            }
             budgets.insert(0, new_budget)
 
     def track_budget(self, args):
         expense_list = [tx for tx in self.transactions['transactions'] if tx.get('type') == 'expense']
-        budgets = self.budgets.get('budgets', [])
-        latest_budget = budgets[0] if budgets else None
+        latest_budgets = self._select_budget(args)
 
-        if not latest_budget:
-           print('You have not set a budget')
+        if not latest_budgets:
+           print('There are no budgets matching these dates')
            return
 
         elif not expense_list:
             print('You have no expenses')
             return
 
-        category = getattr(args, 'category', None)
+        budget_start = min(b['start_date'] for b in latest_budgets)
+        budget_end = max(b['end_date'] for b in latest_budgets)
 
-        if category and category not in latest_budget:
+        category = getattr(args, 'category', None)
+        if category and category not in latest_budgets:
             print(f'{category} was not part of your latest budget.')
             return
-
-        month, year = map(int, latest_budget['date'].split('-'))
-        budget_start = date(year, month, 1)
-        budget_end = date(year, month, calendar.monthrange(year, month)[1])
 
         expense_so_far = []
 
@@ -217,7 +245,7 @@ class FinanceTracker:
         alert = None
 
         if category:
-            budget_total = latest_budget[category]
+            budget_total = sum(b.get(category, 0) for b in latest_budgets)
             total_expense = sum(tx['amount'] for tx in expense_so_far)
             budget_progress = total_expense / budget_total * 100
 
@@ -225,7 +253,7 @@ class FinanceTracker:
 
         else:
             expense_report = self._report(expense_so_far)
-            budget_total = latest_budget['total']
+            budget_total = sum(b['total'] for b in latest_budgets)
             total_expense = expense_report['expenses']
             if budget_total == 0:
                 print('Your budget is 0. Cannot calculate progress')
@@ -249,6 +277,56 @@ class FinanceTracker:
 
         for k, v in budget_status.items():
             print(f'{k}: {v}')
+
+    def export_report(self, args):
+        expenses = [tx for tx in self.transactions['transactions'] if tx.get('type') == 'expense']
+        incomes = [tx for tx in self.transactions['transactions'] if tx.get('type') == 'income']
+        category = getattr(args, 'category', None)
+        file_name = args.file_name
+
+        base_dir = Path(args.file_path).expanduser() if args.file_path else Path(__file__).resolve().parent
+
+        if not base_dir.exists():
+            print('The path you provided does not exist')
+            return
+
+        output_path = base_dir/file_name
+
+        if output_path.exists():
+            response = input(f"{output_path} exists. Overwrite? [y/N]: ").lower()
+            if response != 'y':
+                print("Aborted by user.")
+                return
+
+        transaction_list = []
+        transactions_to_filter = expenses if args.type == 'expenses' else incomes
+
+        for tx in transactions_to_filter:
+            tx_date = self._parse_date(tx.get('date'))
+            if self._date_filter(args, tx_date) and (category is None or tx['category'] == category):
+                transaction_list.append(tx)
+
+        if args.format == 'csv':
+            self._create_csv(output_path, transaction_list)
+            print(f'{file_name} has been created as {output_path}.')
+
+        elif args.format == 'json':
+            self._create_json(output_path, transaction_list)
+            print(f'{file_name} has been created as {output_path}.')
+
+    def _create_csv(self, output, data:list):
+
+        with open(output, 'w', newline='') as f:
+            fieldnames = ['id', 'type', 'date', 'amount', 'category', 'description']
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+
+            writer.writeheader()
+            writer.writerows(data)
+
+    def _create_json(self, output, data:list):
+
+        with open(output, 'w') as f:
+            json.dump(data, f, indent=2)
 
     def _parse_date(self, s):
         return datetime.strptime(s, '%Y-%m-%d').date() if s else None
@@ -312,6 +390,39 @@ class FinanceTracker:
             final_report['most common expense'] = f'{most_common_category} ({categories_expense})'
 
         return final_report
+
+    def _select_budget(self, args) -> list:
+
+        budgets = self.budgets['budgets']
+
+        if not any([args.month, args.year, args.start_date, args.end_date]):
+            return [budgets[0]]
+
+        else:
+            start = self._parse_date(args.start_date)
+            end = self._parse_date(args.end_date)
+
+            b_list = []
+            for b in budgets:
+                if args.start_date and args.end_date:
+                    if b['start_date'] <= end and b['end_date'] >= start:
+                        b_list.append(b)
+                else:
+                    if self._date_filter(args, b['start_date']) or self._date_filter(args, b['end_date']):
+                        b_list.append(b)
+
+            return b_list
+
+            # return [
+            #     b for b in budgets
+            #     if self._date_filter(args, b['start_date'])
+            #        or self._date_filter(args, b['end_date'])
+            #        or (
+            #                args.start_date and args.end_date
+            #                and b['start_date'] <= self._parse_date(args.end_date)
+            #                and b['end_date'] >= self._parse_date(args.start_date)
+            #        )
+            # ]
 
 def main():
 
@@ -391,14 +502,16 @@ def main():
     set_parser.add_argument('--year', type=int, help='Filter by year')
     set_parser.set_defaults(func=tracker.track_budget)
 
-
     # =============== EXPORT COMMANDS ================
     export_parser = subparsers.add_parser('export', help='Export Document')
     export_parser.add_argument('--format', choices=['json', 'csv'], required=True, help='Choose file type')
     export_parser.add_argument('--category', type=str, help='Filter by category')
     export_parser.add_argument('--type', choices=['expense', 'income'], help='Filter by type')
     export_parser.add_argument('--month', type=int, help='Filter by month (1-12)')
-    export_parser.add_argument('--year', type=int, help='Filter by year')
+    export_parser.add_argument('--year', type=int, required = True, help='Filter by year')
+    export_parser.add_argument('--file-name', type=str, required=True, help='File name')
+    export_parser.add_argument('--file-path', type=str, help='File path')
+    set_parser.set_defaults(func=tracker.export_report)
 
 
     args = parser.parse_args()
