@@ -7,13 +7,14 @@ import json
 from datetime import datetime, date
 from collections import Counter, defaultdict
 import calendar
+import logging
+
+
+# Basic logging config for debugging
+logging.basicConfig(level=logging.DEBUG, format='[%(levelname)s] %(message)s')
 
 
 class FinanceTracker:
-
-    BASE_DIR = Path.home()/'Documents'
-    TRANSACTION_FILE = BASE_DIR/'transactions.json'
-    BUDGET_FILE = BASE_DIR/'budgets.json'
 
     def __init__(self, base_dir = None):
 
@@ -35,6 +36,9 @@ class FinanceTracker:
         else:
             self.budgets = {'budgets': []}
 
+        logging.debug(f"FinanceTracker initialized. BASE_DIR={self.BASE_DIR}")
+        logging.debug(f"Loaded {len(self.transactions.get('transactions', []))} transactions and {len(self.budgets.get('budgets', []))} budgets")
+
         # similarly I could use self.transactions = self.TRANSACTION_FILE.open('r') as f using the pathlib module
         # or I could use self.transactions = json.loads(self.TRANSACTION_FILE.read_text())
 
@@ -50,6 +54,7 @@ class FinanceTracker:
             'category': args.category,
             'description': args.description,
         }
+        logging.debug(f"Adding expense: {expense}")
         self.transactions['transactions'].insert(0, expense)
         self._save('transaction', self.transactions)
 
@@ -63,14 +68,17 @@ class FinanceTracker:
             'date': date,
             'amount': round(args.amount, 2),
             'category': args.category,
+            'description': args.description
         }
 
+        logging.debug(f"Adding income: {income}")
         self.transactions['transactions'].insert(0, income)
         self._save('transaction', self.transactions)
 
     def list_transactions(self, args):
 
         transaction_list = self.transactions['transactions']
+        logging.debug(f"Listing transactions - total available: {len(transaction_list)}")
         if not transaction_list:
             print('You have no transactions')
             return False
@@ -79,6 +87,8 @@ class FinanceTracker:
 
         filters = vars(args)
         filters = {k: v for k, v in filters.items() if v and not k in ['commands', 'start_date', 'end_date', 'func'] }
+
+        logging.debug(f"Applied filters: {filters}")
 
         for transaction in transaction_list:
             match = True
@@ -97,6 +107,8 @@ class FinanceTracker:
 
         sorted_transactions = self._sort_transactions(filtered_list)
 
+        logging.debug(f"Filtered transactions count: {len(sorted_transactions)}")
+
         if sorted_transactions:
             for transaction in sorted_transactions:
                 print(transaction)
@@ -107,6 +119,8 @@ class FinanceTracker:
         transaction_list = self.transactions['transactions']
         month = getattr(args, 'month', None)
         year = args.year
+
+        logging.debug(f"Generating report - month: {month}, year: {year}, total_transactions: {len(transaction_list)}")
 
         tx_in_month = []
         tx_in_year = []
@@ -155,6 +169,8 @@ class FinanceTracker:
         year = args.year
         month = getattr(args, 'month', None)
 
+        logging.debug(f"Category report requested for year={year} month={month} - expense count={len(expense_list)}")
+
         categories = defaultdict(list)
 
 
@@ -196,6 +212,8 @@ class FinanceTracker:
         else:
             year = date.today().year
 
+        logging.debug(f"Setting budget for month={budget_month} limit={limit} category={category}")
+
         if latest_budget and latest_budget['start_date'] == date(year, budget_month, 1):
             latest_budget[category] = limit
             latest_budget['total'] = sum(
@@ -211,11 +229,14 @@ class FinanceTracker:
             }
             budgets.insert(0, new_budget)
 
+            logging.debug(f"New budget added: {new_budget}")
             self._save('budget', self.transactions)
 
     def track_budget(self, args):
         expense_list = [tx for tx in self.transactions['transactions'] if tx.get('type') == 'expense']
         latest_budgets = self._select_budget(args)
+
+        logging.debug(f"Tracking budget - found {len(latest_budgets) if latest_budgets else 0} matching budgets and {len(expense_list)} expenses")
 
         if not latest_budgets:
            print('There are no budgets matching these dates')
@@ -282,6 +303,8 @@ class FinanceTracker:
         for k, v in budget_status.items():
             print(f'{k}: {v}')
 
+        logging.debug(f"Budget status: {budget_status}")
+
     def export_report(self, args):
         expenses = [tx for tx in self.transactions['transactions'] if tx.get('type') == 'expense']
         incomes = [tx for tx in self.transactions['transactions'] if tx.get('type') == 'income']
@@ -289,6 +312,8 @@ class FinanceTracker:
         file_name = args.file_name
 
         base_dir = Path(args.file_path).expanduser() if args.file_path else Path(__file__).resolve().parent
+
+        logging.debug(f"Exporting report to {base_dir} filename={file_name} format={args.format}")
 
         if not base_dir.exists():
             print('The path you provided does not exist')
@@ -314,15 +339,21 @@ class FinanceTracker:
             self._create_csv(output_path, transaction_list)
             print(f'{file_name} has been created as {output_path}.')
 
+            logging.debug(f"Exported {len(transaction_list)} transactions to CSV: {output_path}")
+
         elif args.format == 'json':
             self._create_json(output_path, transaction_list)
             print(f'{file_name} has been created as {output_path}.')
+
+            logging.debug(f"Exported {len(transaction_list)} transactions to JSON: {output_path}")
 
     def _save(self, data_type, data:dict ):
         if data_type == 'transaction':
             file = self.TRANSACTION_FILE
         else:
             file = self.BUDGET_FILE
+
+        logging.debug(f"Saving {data_type} data to {file}")
 
         with tempfile.NamedTemporaryFile('w', delete=False) as tmp:
             json.dump(data, tmp, indent=2)
@@ -464,6 +495,7 @@ def main():
     income_parser = add_command_subparser.add_parser('income', help="Add an income")
     income_parser.add_argument('--amount', type=float, help='Income amount')
     income_parser.add_argument('--category', required=True,  type=str, help='Income category')
+    income_parser.add_argument('--description', type=str, help='Income description')
     income_parser.add_argument('--date', type=str, help='Income date (YYYY-MM-DD)')
     income_parser.set_defaults(func=tracker.add_income)
 
