@@ -13,12 +13,11 @@ import logging
 # Basic logging config for debugging
 logging.basicConfig(level=logging.DEBUG, format='[%(levelname)s] %(message)s')
 
-
 class FinanceTracker:
 
     def __init__(self, base_dir = None):
 
-        self.BASE_DIR = Path(base_dir).expanduser().resolve() if base_dir else Path.home()/'Documents'
+        self.BASE_DIR = Path(base_dir).expanduser().resolve() if base_dir else Path(__file__).resolve().parent
         self.TRANSACTION_FILE = self.BASE_DIR / 'transactions.json'
         self.BUDGET_FILE = self.BASE_DIR / 'budgets.json'
 
