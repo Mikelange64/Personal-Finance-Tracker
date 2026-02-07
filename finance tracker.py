@@ -10,7 +10,7 @@ import calendar
 import logging
 
 
-# Basic logging config for debugging
+# Basic logging config for debugginq
 logging.basicConfig(level=logging.DEBUG, format='[%(levelname)s] %(message)s')
 
 class FinanceTracker:
